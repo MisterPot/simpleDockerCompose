@@ -48,39 +48,71 @@ class Sex(Base):
 
 engine = create_engine('postgresql+psycopg2://admin:password@127.0.0.1/db')
 
-Base.metadata.drop_all(engine)
-Base.metadata.create_all(engine)
+
+def init_db() -> None:
+    Base.metadata.create_all(engine)
 
 
-with Session(engine) as session:
+def create_or_update(row: pd.Series, session: Session) -> Passenger:
 
-    df = pd.read_csv(FILEPATH)
-    objects = []
+    passenger_id = row['PassengerId']
+    passenger = session.get(Passenger, passenger_id)
+    sex = session.query(Sex).where(Sex.name == row['Sex']).first().id
 
-    # Adding unique values to another table
-    session.add_all(instances=[
-        Sex(name=sex) for sex in df['Sex'].unique()
-    ])
-    session.commit()
+    values = {
+        'survived': row['Survived'],
+        'p_class': row['Pclass'],
+        'name': row['Name'],
+        'sex': sex,
+        'age': row['Age'],
+        'sib_sp': row['SibSp'],
+        'parch': row['Parch'],
+        'ticket': row['Ticket'],
+        'fare': row['Fare'],
+        'cabin': row['Cabin'],
+        'embarked': row['Embarked']
+    }
 
-    for index, row in df.iterrows():
-        sex = session.query(Sex).where(Sex.name == row['Sex']).first().id
-        objects.append(
-            Passenger(
-                id=row['PassengerId'],
-                survived=row['Survived'],
-                p_class=row['Pclass'],
-                name=row['Name'],
-                sex=sex,
-                age=row['Age'],
-                sib_sp=row['SibSp'],
-                parch=row['Parch'],
-                ticket=row['Ticket'],
-                fare=row['Fare'],
-                cabin=row['Cabin'],
-                embarked=row['Embarked']
+    if not passenger:
+        passenger = Passenger(id=passenger_id, **values)
+
+    else:
+        for key, value in values.items():
+            if getattr(passenger, key) != value:
+                setattr(passenger, key, value)
+
+    return passenger
+
+
+def main() -> None:
+
+    with Session(engine) as session:
+        df = pd.read_csv(FILEPATH)
+        objects = []
+
+        current_uniques = [
+            item[0] for item in session.query(Sex.name).distinct().all()
+        ]
+        unique_items = [
+            item for item in df['Sex'].unique()
+            if item not in current_uniques
+        ]
+
+        # Adding unique values to another table
+        session.add_all(instances=[
+            Sex(name=sex) for sex in unique_items
+        ])
+        session.commit()
+
+        for _, row in df.iterrows():
+            objects.append(
+                create_or_update(row, session)
             )
-        )
 
-    session.add_all(instances=objects)
-    session.commit()
+        session.add_all(instances=objects)
+        session.commit()
+
+
+if __name__ == '__main__':
+    init_db()
+    main()
